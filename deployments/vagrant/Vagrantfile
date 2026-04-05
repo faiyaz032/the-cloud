@@ -1,24 +1,37 @@
 Vagrant.configure("2") do |config|
   config.vm.box = "ubuntu/jammy64"
 
- # load balancer node (IP: 192.168.56.10)
+  # gateway
   config.vm.define "lb01" do |lb|
     lb.vm.hostname = "lb01"
     lb.vm.network "private_network", ip: "192.168.56.10"
+    lb.vm.provider "virtualbox" do |v|
+      v.memory = 512 # LB doesn't need much RAM
+    end
   end
 
-  # Node 2: worker 01 (IP: 192.168.56.11)
-  config.vm.define "node01" do |n1|
-    n1.vm.hostname = "node01"
-    n1.vm.network "private_network", ip: "192.168.56.11"
+  # compute nodes
+  ["compute01", "compute02"].each_with_index do |name, i|
+    config.vm.define name do |node|
+      node.vm.hostname = name
+      node.vm.network "private_network", ip: "192.168.56.#{11 + i}"
+      node.vm.provider "virtualbox" do |v|
+        v.memory = 1024 # Compute needs more RAM for isolated processes
+      end
+    end
   end
 
-  # Node 3: worker 02 (IP: 192.168.56.12)
-  config.vm.define "node02" do |n2|
-    n2.vm.hostname = "node02"
-    n2.vm.network "private_network", ip: "192.168.56.12"
+  # storage nodes
+  ["storage01", "storage02"].each_with_index do |name, i|
+    config.vm.define name do |node|
+      node.vm.hostname = name
+      node.vm.network "private_network", ip: "192.168.56.#{13 + i}"
+      node.vm.provider "virtualbox" do |v|
+        v.memory = 512
+      end
+    end
   end
 
-  # Sync your project folder to /home/vagrant/cloud inside the VMs
+  # Sync your project folder to all nodes
   config.vm.synced_folder "../../", "/home/vagrant/cloud"
 end
