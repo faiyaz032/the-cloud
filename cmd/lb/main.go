@@ -1,9 +1,10 @@
 package main
 
 import (
-	"io"
 	"log"
-	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -70,12 +71,15 @@ func (rr *RoundRobin) StartHealthChecks(interval, timeout time.Duration) {
 }
 
 func isServerAlive(address string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	client := http.Client{
+		Timeout: timeout,
+	}
+	resp, err := client.Get("http://" + address)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
-	return true
+	resp.Body.Close()
+	return resp.StatusCode < 500
 }
 
 const (
@@ -92,68 +96,50 @@ func NewLoadBalancer(algo string, servers []string) LoadBalancer {
 }
 
 func main() {
-	lb := NewRoundRobin([]string{
-		"192.168.56.11:8080", // node01
-		"192.168.56.12:8080", // node02
+	computeLB := NewRoundRobin([]string{
+		"192.168.56.11:8080",
+		"192.168.56.12:8080",
 	})
 
-	go lb.StartHealthChecks(3*time.Second, 1*time.Second)
+	storageLB := NewRoundRobin([]string{
+		"192.168.56.13:8081",
+		"192.168.56.14:8081",
+	})
 
-	if err := Start(":80", lb); err != nil {
-		log.Fatal(err)
-	}
+	go computeLB.StartHealthChecks(3*time.Second, 1*time.Second)
+	go storageLB.StartHealthChecks(3*time.Second, 1*time.Second)
+
+	http.HandleFunc("/", HandleHTTP(computeLB, storageLB))
+	log.Println("HTTP Load Balancer running on :80")
+	log.Fatal(http.ListenAndServe(":80", nil))
 }
 
-func HandleConnection(conn net.Conn, lb LoadBalancer) {
-	defer conn.Close()
+func HandleHTTP(computeLB, storageLB LoadBalancer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var target string
 
-	serverAddr := lb.GetNextServer()
-	if serverAddr == "" {
-		log.Println("no healthy backend available")
-		return
-	}
+		if r.URL.Path == "/" || r.URL.Path[:8] == "/compute" {
+			target = computeLB.GetNextServer()
+		} else if r.URL.Path[:8] == "/storage" {
+			target = storageLB.GetNextServer()
+		} else {
 
-	serverConn, err := net.Dial("tcp", serverAddr)
-	if err != nil {
-		log.Println("backend connection error:", err)
-		return
-	}
-	defer serverConn.Close()
-
-	done := make(chan struct{}, 2)
-
-	// client -> backend
-	go func() {
-		_, _ = io.Copy(serverConn, conn)
-		done <- struct{}{}
-	}()
-
-	// backend -> client
-	go func() {
-		_, _ = io.Copy(conn, serverConn)
-		done <- struct{}{}
-	}()
-
-	<-done
-	<-done
-}
-
-func Start(address string, lb LoadBalancer) error {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-
-	log.Println("listening on", address)
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Println("accept error:", err)
-			continue
+			http.Error(w, "unknown path", http.StatusNotFound)
+			return
 		}
 
-		go HandleConnection(conn, lb)
+		if target == "" {
+			http.Error(w, "no healthy backend", http.StatusServiceUnavailable)
+			return
+		}
+
+		url, err := url.Parse("http://" + target)
+		if err != nil {
+			http.Error(w, "bad backend URL", http.StatusInternalServerError)
+			return
+		}
+
+		proxy := httputil.NewSingleHostReverseProxy(url)
+		proxy.ServeHTTP(w, r)
 	}
 }
