@@ -50,22 +50,22 @@ func (rr *RoundRobin) GetNextServer() string {
 }
 
 func (rr *RoundRobin) StartHealthChecks(interval, timeout time.Duration) {
+	checkServerHealth := func() {
+		for _, server := range rr.servers {
+			alive := isServerAlive(server, timeout)
+			rr.mu.Lock()
+			rr.alive[server] = alive
+			rr.mu.Unlock()
+		}
+	}
+
+	checkServerHealth()
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for {
-		rr.runHealthChecks(timeout)
-		<-ticker.C
-	}
-}
-
-func (rr *RoundRobin) runHealthChecks(timeout time.Duration) {
-	for _, server := range rr.servers {
-		alive := isServerAlive(server, timeout)
-
-		rr.mu.Lock()
-		rr.alive[server] = alive
-		rr.mu.Unlock()
+	for range ticker.C {
+		checkServerHealth()
 	}
 }
 

@@ -1,0 +1,6 @@
+# Vagrant machine state and generated secrets
+/deployments/vagrant/.vagrant/
+
+# Vagrant-generated SSH private keys
+/deployments/vagrant/**/private_key
+/deployments/vagrant/**/*.pem
