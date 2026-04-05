@@ -1,0 +1,24 @@
+Vagrant.configure("2") do |config|
+  config.vm.box = "ubuntu/jammy64"
+
+ # load balancer node (IP: 192.168.56.10)
+  config.vm.define "lb01" do |lb|
+    lb.vm.hostname = "lb01"
+    lb.vm.network "private_network", ip: "192.168.56.10"
+  end
+
+  # Node 2: worker 01 (IP: 192.168.56.11)
+  config.vm.define "node01" do |n1|
+    n1.vm.hostname = "node01"
+    n1.vm.network "private_network", ip: "192.168.56.11"
+  end
+
+  # Node 3: worker 02 (IP: 192.168.56.12)
+  config.vm.define "node02" do |n2|
+    n2.vm.hostname = "node02"
+    n2.vm.network "private_network", ip: "192.168.56.12"
+  end
+
+  # Sync your project folder to /home/vagrant/cloud inside the VMs
+  config.vm.synced_folder "../../", "/home/vagrant/cloud"
+end
