@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloud Storage Service
+After=network.target
+
+[Service]
+Environment=NODE_IP=192.168.57.11
+ExecStart=/home/vagrant/cloud/bin/storage
+WorkingDirectory=/home/vagrant/cloud
+User=vagrant
+Group=vagrant
+Restart=always
+StandardOutput=append:/home/vagrant/storage.log
+StandardError=append:/home/vagrant/storage.log
+
+[Install]
+WantedBy=multi-user.target

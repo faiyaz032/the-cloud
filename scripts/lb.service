@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloud Load Balancer
+After=network.target
+
+[Service]
+ExecStart=/home/vagrant/cloud/bin/lb
+WorkingDirectory=/home/vagrant/cloud
+User=root
+Group=root
+Restart=always
+StandardOutput=append:/home/vagrant/lb.log
+StandardError=append:/home/vagrant/lb.log
+
+[Install]
+WantedBy=multi-user.target

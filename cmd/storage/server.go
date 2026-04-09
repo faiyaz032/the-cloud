@@ -65,7 +65,7 @@ func (s *StorageServer) serveLocally(w http.ResponseWriter, r *http.Request, key
 }
 
 func (s *StorageServer) forwardGetToNode(w http.ResponseWriter, nodeIP string, key string) {
-	targetURL := fmt.Sprintf("http://%s/download?key=%s", nodeIP, url.QueryEscape(key))
+	targetURL := fmt.Sprintf("http://%s:8081/download?key=%s", nodeIP, url.QueryEscape(key))
 
 	proxyReq, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
@@ -107,9 +107,11 @@ func (s *StorageServer) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 	isInternal := r.Header.Get("X-Internal-Request") == "true"
 	targetNode := s.ring.GetNode(key)
+	log.Printf("HandleUpload: key=%s, targetNode=%s, nodeIP=%s, isInternal=%v", key, targetNode, s.nodeIP, isInternal)
 
 	if targetNode == s.nodeIP || isInternal {
 		//save file locally
+		log.Printf("Saving file %s locally on %s", key, s.nodeIP)
 		err := s.saveLocally(key, r.Body)
 		if err != nil {
 			http.Error(w, "Failed to save file", http.StatusInternalServerError)
@@ -120,6 +122,7 @@ func (s *StorageServer) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("File saved successfully"))
 	} else {
 		// forward request to another node
+		log.Printf("Forwarding upload for key %s from %s to %s", key, s.nodeIP, targetNode)
 		s.forwardToNode(w, targetNode, key, r)
 	}
 }
@@ -139,11 +142,14 @@ func (s *StorageServer) saveLocally(key string, reader io.Reader) error {
 	defer file.Close()
 
 	_, err = io.Copy(file, reader)
+	if err == nil {
+		log.Printf("Successfully saved file %s locally", key)
+	}
 	return err
 }
 
 func (s *StorageServer) forwardToNode(w http.ResponseWriter, nodeIP string, key string, r *http.Request) {
-	targetURL := fmt.Sprintf("http://%s/upload?key=%s", nodeIP, url.QueryEscape(key))
+	targetURL := fmt.Sprintf("http://%s:8081/upload?key=%s", nodeIP, url.QueryEscape(key))
 	proxyReq, err := http.NewRequest(http.MethodPost, targetURL, r.Body)
 	if err != nil {
 		http.Error(w, "Failed to create forward request", http.StatusInternalServerError)

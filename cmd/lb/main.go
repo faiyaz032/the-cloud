@@ -103,8 +103,8 @@ func main() {
 	})
 
 	storageLB := NewRoundRobin([]string{
-		"192.168.56.13:8081",
-		"192.168.56.14:8081",
+		"192.168.57.11:8081",
+		"192.168.57.12:8081",
 	})
 
 	go computeLB.StartHealthChecks(3*time.Second, 1*time.Second)
