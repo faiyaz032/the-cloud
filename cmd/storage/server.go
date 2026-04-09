@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -23,6 +23,73 @@ func NewStorageServer(nodeIP, dataDir string, ring *hashing.HashRing) *StorageSe
 		ring:    ring,
 		nodeIP:  nodeIP,
 		dataDir: dataDir,
+	}
+}
+
+func (s *StorageServer) HandleDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract key from URL (e.g., /download?key=my-image.png)
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "Key is required", http.StatusBadRequest)
+		return
+	}
+
+	isInternal := r.Header.Get("X-Internal-Request") == "true"
+	targetNode := s.ring.GetNode(key)
+
+	// Check if this node is the owner or if it's an internal redirected request
+	if targetNode == s.nodeIP || isInternal {
+		s.serveLocally(w, r, key)
+	} else {
+		// Forward the GET request to the correct node
+		s.forwardGetToNode(w, targetNode, key)
+	}
+}
+
+func (s *StorageServer) serveLocally(w http.ResponseWriter, r *http.Request, key string) {
+	filePath := filepath.Join(s.dataDir, key)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("Serving file %s from local storage", key)
+	http.ServeFile(w, r, filePath)
+}
+
+func (s *StorageServer) forwardGetToNode(w http.ResponseWriter, nodeIP string, key string) {
+	targetURL := fmt.Sprintf("http://%s/download?key=%s", nodeIP, url.QueryEscape(key))
+
+	proxyReq, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	proxyReq.Header.Set("X-Internal-Request", "true")
+
+	client := &http.Client{}
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		http.Error(w, "Error reaching target node", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		log.Printf("Error copying response back: %v", err)
 	}
 }
 
@@ -59,10 +126,15 @@ func (s *StorageServer) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 // save files locally into node
 func (s *StorageServer) saveLocally(key string, reader io.Reader) error {
+	err := os.MkdirAll(s.dataDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create storage directory: %w", err)
+	}
+
 	filePath := filepath.Join(s.dataDir, key)
 	file, err := os.Create(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create file: %w", err)
 	}
 	defer file.Close()
 
@@ -71,20 +143,18 @@ func (s *StorageServer) saveLocally(key string, reader io.Reader) error {
 }
 
 func (s *StorageServer) forwardToNode(w http.ResponseWriter, nodeIP string, key string, r *http.Request) {
-	// buffer read from request body to forward it
-	bodyBytes, err := io.ReadAll(r.Body)
+	targetURL := fmt.Sprintf("http://%s/upload?key=%s", nodeIP, url.QueryEscape(key))
+	proxyReq, err := http.NewRequest(http.MethodPost, targetURL, r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		http.Error(w, "Failed to create forward request", http.StatusInternalServerError)
+		log.Printf("Error creating request for %s: %v", nodeIP, err)
 		return
 	}
-	r.Body.Close()
 
-	targetURL := fmt.Sprintf("http://%s/upload?key=%s", nodeIP, key)
-	proxyReq, _ := http.NewRequest(http.MethodPost, targetURL, io.NopCloser(bytes.NewReader(bodyBytes)))
-
-	// set headers
+	// Reuse original metadata while streaming the request body through.
 	proxyReq.Header.Set("X-Internal-Request", "true")
 	proxyReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	proxyReq.ContentLength = r.ContentLength
 
 	client := &http.Client{}
 	resp, err := client.Do(proxyReq)

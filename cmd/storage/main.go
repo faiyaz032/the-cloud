@@ -11,7 +11,15 @@ import (
 
 func main() {
 	nodeIP := os.Getenv("NODE_IP")
-	home, _ := os.UserHomeDir()
+	if nodeIP == "" {
+		log.Fatal("CRITICAL: NODE_IP environment variable is not set")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("Could not find home directory: %v", err)
+	}
+
 	storagePath := filepath.Join(home, "cloud-data")
 
 	ring := hashing.NewHashRing(20)
@@ -19,8 +27,11 @@ func main() {
 	ring.AddNode("192.168.56.14:8081")
 
 	server := NewStorageServer(nodeIP, storagePath, ring)
-	http.HandleFunc("/upload", server.HandleUpload)
 
-	log.Printf("Storage node %s starting on :8080...", nodeIP)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	http.HandleFunc("/upload", server.HandleUpload)
+	http.HandleFunc("/download", server.HandleDownload)
+
+	log.Printf("Storage node %s starting on :8081...", nodeIP)
+	log.Printf("Data directory: %s", storagePath)
+	log.Fatal(http.ListenAndServe(":8081", nil))
 }

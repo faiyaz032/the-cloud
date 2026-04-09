@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -118,12 +119,13 @@ func HandleHTTP(computeLB, storageLB LoadBalancer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var target string
 
-		if r.URL.Path == "/" || r.URL.Path[:8] == "/compute" {
+		switch {
+		case r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/compute"):
 			target = computeLB.GetNextServer()
-		} else if r.URL.Path[:8] == "/storage" {
+		case strings.HasPrefix(r.URL.Path, "/storage"):
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/storage")
 			target = storageLB.GetNextServer()
-		} else {
-
+		default:
 			http.Error(w, "unknown path", http.StatusNotFound)
 			return
 		}
@@ -133,13 +135,13 @@ func HandleHTTP(computeLB, storageLB LoadBalancer) http.HandlerFunc {
 			return
 		}
 
-		url, err := url.Parse("http://" + target)
+		remote, err := url.Parse("http://" + target)
 		if err != nil {
 			http.Error(w, "bad backend URL", http.StatusInternalServerError)
 			return
 		}
 
-		proxy := httputil.NewSingleHostReverseProxy(url)
+		proxy := httputil.NewSingleHostReverseProxy(remote)
 		proxy.ServeHTTP(w, r)
 	}
 }
